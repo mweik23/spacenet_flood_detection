@@ -1,0 +1,9 @@
+data/Germany_Training/*
+data/Louisiana-East_Training/*
+data/Louisiana-West_Test/*
+data/processed_data/metadata/*
+
+!data/Germany_Training/.gitkeep
+!data/Louisiana-East_Training/.gitkeep
+!data/Louisiana-West_Test/.gitkeep
+!data/processed_data/metadata/.gitkeep
