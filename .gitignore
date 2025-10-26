@@ -1,9 +1,17 @@
 data/Germany_Training/*
 data/Louisiana-East_Training/*
 data/Louisiana-West_Test/*
-data/processed_data/metadata/*
+data/processed/metadata/*
+data/processed/train/PRE-event/*
+data/processed/train/POST-event/*
+data/processed/valid/PRE-event/*
+data/processed/valid/POST-event/*
 
 !data/Germany_Training/.gitkeep
 !data/Louisiana-East_Training/.gitkeep
 !data/Louisiana-West_Test/.gitkeep
-!data/processed_data/metadata/.gitkeep
+!data/processed/metadata/.gitkeep
+!data/processed/train/PRE-event/.gitkeep
+!data/processed/train/POST-event/.gitkeep
+!data/processed/valid/PRE-event/.gitkeep
+!data/processed/valid/POST-event/.gitkeep
