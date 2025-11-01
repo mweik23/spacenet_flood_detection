@@ -19,13 +19,15 @@ def main():
                            metadata_path=PROC_DIR / "metadata",
                            df_types=('regions', 'objects')
                             )
-
+    
     processor = ImageProcessor(regions=dfs['regions'],
+                               objects=dfs['objects'],
+                               label_channels=('roads',),
                                final_splits = ('train', 'valid'), 
                                image_types = ('pre-event image', 'post-event image 1', 'post-event image 2'),
                                metadata_path = PROC_DIR / "metadata"
                                )
-    processor.process_data(quality = 99)
+    processor.process_data(compress_level=1, sigma=5)
     
     #save large translation log
     img_sz_log_df = pd.DataFrame(processor.image_size_log)

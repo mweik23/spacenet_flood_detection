@@ -6,6 +6,8 @@ data/processed/train/PRE-event/*
 data/processed/train/POST-event/*
 data/processed/valid/PRE-event/*
 data/processed/valid/POST-event/*
+data/processed/train/labels/*
+data/processed/valid/labels/*
 
 !data/Germany_Training/.gitkeep
 !data/Louisiana-East_Training/.gitkeep
@@ -15,3 +17,5 @@ data/processed/valid/POST-event/*
 !data/processed/train/POST-event/.gitkeep
 !data/processed/valid/PRE-event/.gitkeep
 !data/processed/valid/POST-event/.gitkeep
+!data/processed/train/labels/.gitkeep
+!data/processed/valid/labels/.gitkeep
