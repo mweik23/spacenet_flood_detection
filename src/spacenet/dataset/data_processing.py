@@ -20,6 +20,10 @@ def convert_to_image(img):
         img = img.transpose((1, 2, 0))
     return img
 
+def get_coords(image_name):
+    image_id_len = len(image_name.split('_')[0])
+    return image_name[image_id_len+1:]
+
 ''' Resize function to maintain aspect ratio and use appropriate interpolation based on size
 ref_size: tuple of (width, height) to resize the image to
 '''
@@ -190,12 +194,10 @@ class ImageProcessor:
             self.label_channels = [ch for ch in self.label_channels if ch != 'buildings']
         #--------------------------------------------------------------------------------
         labels = np.concatenate(labels_tup, axis=0) if len(labels_tup)>0 else np.empty((0, img_shape[0], img_shape[1]))
-        image_id_len = len(image_name.split('_')[0])
-        coords = image_name[image_id_len+1:]
         
         label_dir = out_dir / "labels" 
         label_dir.mkdir(parents=True, exist_ok=True)
-        label_path = label_dir / f"labels_{coords}.npy"
+        label_path = label_dir / f"labels_{get_coords(image_name)}.npy"
         np.save(label_path, labels)
         return labels, label_path
 
