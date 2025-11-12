@@ -52,7 +52,7 @@ def main():
     PROC_DIR.mkdir(parents=True, exist_ok=True)
     df_types = ('regions', 'objects')
     rename_dict = {'regions': 'label_image_mapping', 'objects': 'reference'}
-    num_imgs = 4
+    num_imgs = 8
     label_channels = ('roads',)
     sigma = 5
     

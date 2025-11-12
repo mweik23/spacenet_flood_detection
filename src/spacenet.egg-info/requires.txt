@@ -1,0 +1,9 @@
+numpy
+pandas
+matplotlib
+scikit-learn
+h5py
+geopandas
+tifffile
+opencv-python
+shared-lib@ git+https://github.com/mweik23/shared-lib.git@main

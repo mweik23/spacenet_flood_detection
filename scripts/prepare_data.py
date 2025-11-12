@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import pandas as pd
+import shutil
 
 PROJECT_ROOT = Path(__file__).parents[1].resolve()
 SRC_DIR = PROJECT_ROOT / "src" / "spacenet"
@@ -13,6 +14,10 @@ DATA_DIR = Path(PROJECT_ROOT / "data")
 PROC_DIR = Path(DATA_DIR / "processed")
 
 def main():
+    num_imgs = 10
+    if PROC_DIR.exists():
+        shutil.rmtree(PROC_DIR)
+    PROC_DIR.mkdir(parents=True, exist_ok=True)
     dfs = process_metadata(cities=('Germany', 'Louisiana-East'), 
                            raw_split='Training', 
                            rename_dict={'regions': 'label_image_mapping', 'objects': 'reference'},
@@ -27,7 +32,7 @@ def main():
                                image_types = ('pre-event image', 'post-event image 1', 'post-event image 2'),
                                metadata_path = PROC_DIR / "metadata"
                                )
-    processor.process_data(compress_level=1, sigma=5)
+    processor.process_data(num_imgs=num_imgs, val_size=0.2, compress_level=1, sigma=5)
     
     #save large translation log
     img_sz_log_df = pd.DataFrame(processor.image_size_log)

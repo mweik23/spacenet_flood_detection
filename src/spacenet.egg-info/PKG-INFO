@@ -1,0 +1,15 @@
+Metadata-Version: 2.4
+Name: spacenet
+Version: 0.1.0
+Requires-Python: <3.10,>=3.9
+License-File: LICENSE
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: matplotlib
+Requires-Dist: scikit-learn
+Requires-Dist: h5py
+Requires-Dist: geopandas
+Requires-Dist: tifffile
+Requires-Dist: opencv-python
+Requires-Dist: shared-lib@ git+https://github.com/mweik23/shared-lib.git@main
+Dynamic: license-file

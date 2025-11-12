@@ -1,11 +1,7 @@
-from torch.utils.data import Dataset, DataLoader
-from PIL import Image
-import random
-from pathlib import Path
+from torch.utils.data import Dataset
 from typing import List, Tuple, Optional
-import numpy as np
-import torch
-import torch.nn.functional as F
+from torch.utils.data import DataLoader, DistributedSampler
+from shared_lib.utils.distributed import DistInfo
 
 class PathsDataset(Dataset):
     """Return lightweight metadata so we can open in collate_fn."""
@@ -22,3 +18,35 @@ class PathsDataset(Dataset):
         # Return paths and any per-image scalar target
         instance = self.paths[i]
         return {k: v for k, v in instance.items()}
+
+def get_dataloaders(datasets: dict,
+                    batch_size: int,
+                    collate_fn,
+                    num_workers: int = 0,
+                    dist_info: DistInfo = None,
+                    seed: int = 42
+                    ) -> dict[str, DataLoader]:
+    """Get train and valid dataloaders."""
+    loaders = {}
+    if 'train' in datasets:
+        train_sampler = DistributedSampler(datasets['train'], 
+                                           shuffle=True, 
+                                           seed=seed, 
+                                           num_replicas=dist_info.world_size, 
+                                           rank=dist_info.rank, 
+                                           drop_last=False)
+    else:
+        train_sampler = None
+    for split, dataset in datasets.items():
+        assert isinstance(dataset, Dataset), f"Dataset for split {split} is not a torch Dataset"
+        train_sampler
+        loaders[split] = DataLoader(
+            datasets['split'],
+            sampler=train_sampler if split=='train' else None,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=num_workers,
+            collate_fn=collate_fn
+        )
+
+    return loaders
