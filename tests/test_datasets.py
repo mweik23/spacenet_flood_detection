@@ -22,7 +22,8 @@ parser.add_argument('--test_dataloader', action='store_true', help='Whether to r
 parser.add_argument('--test_dataloader_real', action='store_true', help='Whether to run the dataloader real test')
 args = parser.parse_args()
 
-def set_global_seed(seed: int):
+def set_global_seed(seed: int, rank: int = 0):
+    seed = seed + rank
     os.environ["PYTHONHASHSEED"] = str(seed)
     random.seed(seed); np.random.seed(seed)
     torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
@@ -156,8 +157,7 @@ if __name__ == '__main__':
     batch_size = 2
 
     # 1) Per-rank base seed for model/ops/augs (OK to differ by rank)
-    base_op_seed = seed + rank
-    set_global_seed(base_op_seed)
+    set_global_seed(seed, rank=rank)
 
     # 2) Shared, fixed seed for the SAMPLER across all ranks
     sampler_seed = seed  # <-- SAME on all ranks

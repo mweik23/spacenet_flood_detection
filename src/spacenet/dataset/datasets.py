@@ -2,6 +2,8 @@ from torch.utils.data import Dataset
 from typing import List, Tuple, Optional
 from torch.utils.data import DataLoader, DistributedSampler
 from shared_lib.utils.distributed import DistInfo
+from spacenet.dataset.collate import TileCollator
+from spacenet.utils.random import worker_init_fn
 
 class PathsDataset(Dataset):
     """Return lightweight metadata so we can open in collate_fn."""
@@ -22,11 +24,16 @@ class PathsDataset(Dataset):
 def get_dataloaders(datasets: dict,
                     batch_size: int,
                     collate_fn,
+                    collate_cfg: Optional[dict] = None,
                     num_workers: int = 0,
                     dist_info: DistInfo = None,
                     seed: int = 42
                     ) -> dict[str, DataLoader]:
     """Get train and valid dataloaders."""
+    if collate_fn is None and collate_cfg is not None:
+        collate_fn = TileCollator(**collate_cfg)
+    if collate_fn is None:
+        raise ValueError("Provide collate_fn or collate_cfg")
     loaders = {}
     if 'train' in datasets:
         train_sampler = DistributedSampler(datasets['train'], 
@@ -45,6 +52,7 @@ def get_dataloaders(datasets: dict,
             sampler=train_sampler if split=='train' else None,
             batch_size=batch_size,
             shuffle=False,
+            worker_init_fn=worker_init_fn,
             num_workers=num_workers,
             collate_fn=collate_fn
         )
