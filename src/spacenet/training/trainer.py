@@ -6,13 +6,12 @@ from torch import distributed as dist
 from torch import nn, optim
 import os
 
+from .policies import StandardPolicy
+
 from ml_tools.training.metrics import get_test_metrics, RunningStats
 from ml_tools.training.reporting import display_epoch_summary, make_logits_plt, make_train_plt, display_status, finish_roc_plot
-from ml_tools.training.losses import LambdaAdjust
 from ml_tools.training.schedulers import SchedConfig, make_scheduler
-from .policies import make_policy #TODO: figure out where this should go
-from ml_tools.training.training_utils import pair_by_source_len, Initialization, TrainEpochStart, ValidEpochStart, TestEpochStart, EndFirstVal, LossDict, MetricHistory
-
+from ml_tools.training.training_utils import Initialization, TrainEpochStart, ValidEpochStart, TestEpochStart, MetricHistory
 from ml_tools.utils.distributed import globalize_epoch_totals, epoch_metrics_from_globals
 from ml_tools.utils.buffers import EpochLogitBuffer  
 from ml_tools.utils.distributed import DistInfo
@@ -43,19 +42,17 @@ class Trainer:
             TrainEpochStart: self._start_train_epoch,
             ValidEpochStart: self._start_valid_epoch,
             TestEpochStart: self._start_test_epoch,
-            EndFirstVal: self._end_first_val,
         }
         self.update_state(Initialization()) #guess values
         self.scheduler = make_scheduler(self.optimizer, self.sched_config)
         self.buffer = EpochLogitBuffer(keep_indices=False, 
                                             keep_domains=False,
                                             assume_equal_lengths=True)
-        self.policy = make_policy(loss_fns=self.loss_fn, 
+        self.policy = StandardPolicy(loss_fn=self.loss_fn, 
                                   bufs=self.buffer, 
                                   device=self.device, 
                                   dtype=self.dtype,
-                                  mode=self.mode,
-                                  **policy_kwargs) #TODO: update for my policy
+                                  **policy_kwargs)
 
     def _save_ckp(self, state, is_best, epoch, save_all=False):
         p = Path(self.cfg.logdir) / self.cfg.exp_name
@@ -71,15 +68,7 @@ class Trainer:
         
     def _initialize(self, event):
         self.state['get_buffers'] = False
-        if self.cfg.do_MMD:
-            self._update_mmd_norm(event.bce_estimate, event.mmd_estimate)
-            self.state['use_tar_labels'] = self.cfg.use_tar_labels
-        if self.mode == 'st_classifier':
-            self.state['track_domains'] = ['Mixed']
-        elif self.mode == 'qt_classifier':
-            self.state['track_domains'] = ['Source']
         self.state['epochs_completed'] = -1
-        self.state['all_domains'] = ['Mixed'] if self.mixed_batch else ['Source', 'Target']
 
     def _start_train_epoch(self, event):
         self.state['phase'] = 'train'
@@ -89,20 +78,11 @@ class Trainer:
     def _start_valid_epoch(self, event):
         self.state['phase'] = 'valid'
         if self.state['epochs_completed'] == -1:
-            self.state['get_buffers'] = True if (self.cfg.do_MMD or self.mode=='st_classifier') else False
+            self.state['get_buffers'] = True
             
     def _start_test_epoch(self, event):
         self.state['phase'] = 'test'
         self.state['get_buffers'] = True
-        if self.mode == 'st_classifier':
-            self.state['track_domains'] = ['Mixed']
-        elif self.mode == 'qt_classifier':
-            self.state['track_domains'] = ['Source', 'Target']
-        
-    def _end_first_val(self, event):
-        if self.cfg.do_MMD:
-            self._update_mmd_norm(event.bce, event.mmd/self.metrics.mmd_norm/self.cfg.MMD_frac)
-            self.state['mmd_norm'] = self.metrics.mmd_norm
             
     def update_state(self, event):
         handler = self._handlers.get(type(event), None)
@@ -134,7 +114,7 @@ class Trainer:
             tracker.update(**batch_metrics)
 
             if (batch_idx+1) % self.cfg.log_interval == 0:
-                display_status(phase=self.state['phase'], domain=d, epoch=epoch, 
+                display_status(phase=self.state['phase'], epoch=epoch, 
                                 tot_epochs=0 if self.state['phase']=='test' else self.final_epoch-1, #TODO: check if this gives correct tot_epochs
                                 batch_idx=batch_idx+1, num_batches=loader_length,
                                 running_acc=tracker.running_acc, avg_batch_time=tracker.avg_batch_time(),
@@ -176,18 +156,14 @@ class Trainer:
                 val_time = val_metrics['time'],
             )
 
-            self.update_state(EndFirstVal())
-
             self.metrics.update(best_val=self.metrics.get('val_loss')[-1],
                                 best_epoch=self.start_epoch-1
                                 )
             
-            
-            ## save best model (minimum BCE + MMD with the MMD_coef only - no epoch dependent coefs) 
-            
-            display_epoch_summary(partition="validation", epoch=self.start_epoch-1, tot_epochs=self.final_epoch-1,
-                            acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], loss=self.metrics.get("val_loss")[-1],
-                            logger=getattr(self, "logger", None))
+            if self.dist_info.is_primary:
+                display_epoch_summary(partition="validation", epoch=self.start_epoch-1, tot_epochs=self.final_epoch-1,
+                                acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], loss=self.metrics.get("val_loss")[-1],
+                                logger=getattr(self, "logger", None))
         else:
             self.metrics.update(best_val=float('inf'), best_epoch=-1)
         ### training and validation
@@ -214,17 +190,16 @@ class Trainer:
                     train_time = train_metrics['time'],
                     lr = self.optimizer.param_groups[0]['lr'] #TODO: change this keyword in metrics
                 )
-            display_epoch_summary(partition="train", epoch=epoch, tot_epochs=self.final_epoch-1,
-                            bce=self.metrics.get("train_BCE")[-1], acc=self.metrics.get("train_acc")[-1], time_s=self.metrics.get("train_time")[-1],
-                            logger=getattr(self, "logger", None))
+            if self.dist_info.is_primary:
+                display_epoch_summary(partition="train", epoch=epoch, tot_epochs=self.final_epoch-1,
+                                bce=self.metrics.get("train_BCE")[-1], acc=self.metrics.get("train_acc")[-1], time_s=self.metrics.get("train_time")[-1],
+                                logger=getattr(self, "logger", None))
             #----------validation------------
             if epoch % self.cfg.val_interval == 0:
                 self.update_state(ValidEpochStart())
                 with torch.no_grad():
                     val_metrics, _ = self._run_epoch(epoch,
                                                      loader=self.dataloaders['valid'])
-                if self.cfg.pretrained =='' and epoch==self.start_epoch:
-                    self.update_state(EndFirstVal())
                 val_loss = val_metrics['loss']
                 self.metrics.append(
                         val_loss = val_loss,
@@ -244,12 +219,11 @@ class Trainer:
                 json_object = json.dumps(self.metrics.to_dict(), indent=4)
                 with open(f"{self.cfg.logdir}/{self.cfg.exp_name}/train-result.json", "w") as outfile:
                     outfile.write(json_object)
-                        
-                display_epoch_summary(partition="validation", epoch=epoch, tot_epochs=self.final_epoch-1,
-                            acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], 
-                            best_epoch=self.metrics.get('best_epoch'), best_val=self.metrics.get('best_val'), 
-                            loss=self.metrics.get("val_loss")[-1], logger=getattr(self, "logger", None))
-
+                if self.dist_info.is_primary:      
+                    display_epoch_summary(partition="validation", epoch=epoch, tot_epochs=self.final_epoch-1,
+                                acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], 
+                                best_epoch=self.metrics.get('best_epoch'), best_val=self.metrics.get('best_val'), 
+                                loss=self.metrics.get("val_loss")[-1], logger=getattr(self, "logger", None))
             self.scheduler.step_epoch(val_metric=val_loss)
             dist.barrier() # syncronize
         # keys needed: ['epochs', 'train_BCE', 'val_BCE'] if do_MMD: += ['train_MMD', 'val_MMD', 'train_loss', 'val_loss']
@@ -292,11 +266,11 @@ class Trainer:
                                 domains={k: v['domains'] for k, v in init_val_buffers.items()} if self.mode=='st_classifier' else None)
 
         #TODO: check default behavior of domain
-        display_epoch_summary(partition="test", epoch=1, tot_epochs=0,
-                        acc=test_metrics.get('acc', None), time_s=test_metrics.get('time', None),
-                        logger=getattr(self, "logger", None), domain=None, auc=test_metrics.get('auc', None), 
-                        r30=test_metrics.get('1/eB ~ 0.3', None), loss=test_metrics.get('loss', None))
-
+        if self.dist_info.is_primary:
+            display_epoch_summary(partition="test", epoch=1, tot_epochs=0,
+                            acc=test_metrics.get('acc', None), time_s=test_metrics.get('time', None),
+                            logger=getattr(self, "logger", None), domain=None, auc=test_metrics.get('auc', None), 
+                            r30=test_metrics.get('1/eB ~ 0.3', None), loss=test_metrics.get('loss', None))
         if self.dist_info.is_primary:
             json_object = json.dumps(test_metrics, indent=4)
             with open(f"{self.cfg.logdir}/{self.cfg.exp_name}/test-result.json", "w") as outfile:
