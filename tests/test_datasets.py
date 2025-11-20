@@ -13,6 +13,7 @@ sys.path.append(str(SRC_PATH))
 from dataset.data_processing import get_coords
 from dataset.datasets import PathsDataset
 from dataset.collate import TileCollator
+from shared_lib.utils.random import set_global_seed, worker_init_fn
 from collections import deque
 import argparse
 parser = argparse.ArgumentParser()
@@ -21,17 +22,6 @@ parser.add_argument('--test_collate_fn', action='store_true', help='Whether to r
 parser.add_argument('--test_dataloader', action='store_true', help='Whether to run the dataloader test')
 parser.add_argument('--test_dataloader_real', action='store_true', help='Whether to run the dataloader real test')
 args = parser.parse_args()
-
-def set_global_seed(seed: int, rank: int = 0):
-    seed = seed + rank
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    random.seed(seed); np.random.seed(seed)
-    torch.manual_seed(seed); torch.cuda.manual_seed_all(seed)
-
-def worker_init_fn(_wid: int):
-    seed = torch.initial_seed() % 2**32
-    np.random.seed(seed)
-    random.seed(seed)
     
 def test_loader_paths(dataset, sampler, paths, batch_size, epoch=0):
     # Ensures all ranks advance the SAME permutation in lockstep

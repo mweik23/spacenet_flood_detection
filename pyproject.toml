@@ -15,7 +15,7 @@ dependencies = [
   "geopandas",
   "tifffile",
   "opencv-python",
-  "shared-lib @ git+https://github.com/mweik23/shared-lib.git@main"
+  "ml_tools @ git+https://github.com/mweik23/ml_tools.git@main"
 ]
 
 [tool.setuptools]

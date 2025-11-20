@@ -1,9 +1,26 @@
 from torch.utils.data import Dataset
 from typing import List, Tuple, Optional
 from torch.utils.data import DataLoader, DistributedSampler
-from shared_lib.utils.distributed import DistInfo
+from ml_tools.utils.distributed import DistInfo
 from spacenet.dataset.collate import TileCollator
-from spacenet.utils.random import worker_init_fn
+from spacenet.dataset.data_processing import get_coords
+from spacenet.utils.random import worker_init_base as worker_init
+from pathlib import Path
+import pandas as pd
+
+def get_paths(data_dir: Path) -> List[dict]:
+    splits_path = data_dir / 'metadata' / 'splits.csv'
+    splits_df = pd.read_csv(splits_path)
+
+    image_names = splits_df[splits_df['split']=='train']['image_name']
+
+    pre_image_dir = data_dir / 'train' / 'PRE-event'
+    label_dir = data_dir / 'train' / 'labels'
+
+    paths = [{'id': name,
+            'pre-event image': str(pre_image_dir / f"{name}.png"),
+            'labels': str(label_dir / f"labels_{get_coords(name)}.npy")} for name in image_names]
+    return paths
 
 class PathsDataset(Dataset):
     """Return lightweight metadata so we can open in collate_fn."""
@@ -52,7 +69,7 @@ def get_dataloaders(datasets: dict,
             sampler=train_sampler if split=='train' else None,
             batch_size=batch_size,
             shuffle=False,
-            worker_init_fn=worker_init_fn,
+            worker_init_fn=worker_init,
             num_workers=num_workers,
             collate_fn=collate_fn
         )

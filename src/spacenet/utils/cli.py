@@ -23,7 +23,7 @@ def build_parser():
                         help='how many batches to wait before logging training status')
     parser.add_argument('--val_interval', type=int, default=1, metavar='N',
                         help='how many epochs to wait before validation')
-    parser.add_argument('--datadir', nargs='+', default='data/top', metavar='N',
+    parser.add_argument('--datadir', default='data/processed', metavar='N',
                         help='data directories')
     parser.add_argument('--logdir', type=str, default='logs/top', metavar='N',
                         help='folder to output logs')
