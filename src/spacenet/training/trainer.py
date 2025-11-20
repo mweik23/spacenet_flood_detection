@@ -164,15 +164,14 @@ class Trainer:
             with torch.no_grad():
                 # first validation run to get initial MMD and BCE
                 #TODO: change the way secondary loader is passed and conditions are checked
-                val_metrics, val_buffers = self._run_epoch(self.start_epoch-1, 
-                                                           loader=self.dataloaders['valid'])
+                val_metrics, val_buffers = self._run_epoch(self.start_epoch-1, loader=self.dataloaders['valid'])
             #save logits and labels for validation
             if val_buffers is not None: 
                 torch.save(val_buffers, f'{self.cfg.logdir}/{self.cfg.exp_name}/init_val_buffers.pt')
 
             self.metrics.append(
                 epochs = self.start_epoch-1,
-                val_loss = val_metrics['BCE_loss'], #TODO: what do I do about total vs BCE loss
+                val_loss = val_metrics['loss'], #TODO: what do I do about total vs BCE loss
                 val_acc = val_metrics['acc'],
                 val_time = val_metrics['time'],
             )
@@ -187,7 +186,7 @@ class Trainer:
             ## save best model (minimum BCE + MMD with the MMD_coef only - no epoch dependent coefs) 
             
             display_epoch_summary(partition="validation", epoch=self.start_epoch-1, tot_epochs=self.final_epoch-1,
-                            bce=self.metrics.get("val_BCE")[-1],acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1],
+                            acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], loss=self.metrics.get("val_loss")[-1],
                             logger=getattr(self, "logger", None))
         else:
             self.metrics.update(best_val=float('inf'), best_epoch=-1)
@@ -205,8 +204,7 @@ class Trainer:
             if self.dist_info.is_primary:
                 print(lr_message)
             #----------training------------
-            train_metrics, _ = self._run_epoch(epoch, 
-                                               loader=self.dataloaders['train'])
+            train_metrics, _ = self._run_epoch(epoch, loader=self.dataloaders['train'])
 
             self.metrics.append(
                     epochs = epoch,
@@ -227,9 +225,8 @@ class Trainer:
                                                      loader=self.dataloaders['valid'])
                 if self.cfg.pretrained =='' and epoch==self.start_epoch:
                     self.update_state(EndFirstVal())
-                val_loss = val_metrics['BCE_loss']
+                val_loss = val_metrics['loss']
                 self.metrics.append(
-                        val_BCE = val_metrics['BCE_loss'],
                         val_loss = val_loss,
                         val_acc = val_metrics['acc'],
                         val_time = val_metrics['time'],
@@ -249,9 +246,9 @@ class Trainer:
                     outfile.write(json_object)
                         
                 display_epoch_summary(partition="validation", epoch=epoch, tot_epochs=self.final_epoch-1,
-                            bce=self.metrics.get("val_BCE")[-1], acc=self.metrics.get("val_acc")[-1],
-                            time_s=self.metrics.get("val_time")[-1], best_epoch=self.metrics.get('best_epoch'),
-                            best_val=self.metrics.get('best_val'), logger=getattr(self, "logger", None))
+                            acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], 
+                            best_epoch=self.metrics.get('best_epoch'), best_val=self.metrics.get('best_val'), 
+                            loss=self.metrics.get("val_loss")[-1], logger=getattr(self, "logger", None))
 
             self.scheduler.step_epoch(val_metric=val_loss)
             dist.barrier() # syncronize
@@ -260,8 +257,8 @@ class Trainer:
         if self.dist_info.is_primary:
             make_train_plt(self.metrics.to_dict(), 
                             f"{self.cfg.logdir}/{self.cfg.exp_name}", 
-                            pretrained=(self.cfg.pretrained !=''), 
-                            do_MMD=(self.cfg.MMD_frac>0)) #TODO: remove argument and check that default is False
+                            pretrained=(self.cfg.pretrained !=''),
+                            main_loss_name='loss')
     
     def test(self):
         ### test on best model
@@ -270,18 +267,17 @@ class Trainer:
         self.update_state(TestEpochStart())
         
         with torch.no_grad():
-            test_metrics, test_buffers = self._run_epoch(0, 
-                                                         loader=self.dataloaders['valid'])
+            test_metrics, test_buffers = self._run_epoch(0, loader=self.dataloaders['valid'])
     
         #print(f'rank: {self.dist_info.rank}, test_buffers: {test_buffers}')
         if test_buffers is not None:
             torch.save(test_buffers, f'{self.cfg.logdir}/{self.cfg.exp_name}/best_val_buffers.pt')
             # plot final logits
-            make_logits_plt({k: v['logit_diffs'] for k, v in test_buffers.items()},
+            make_logits_plt({'Source': test_buffers['logit_diffs']},
                             f"{self.cfg.logdir}/{self.cfg.exp_name}", 
                             domains={k: v['domains'] for k, v in test_buffers.items()} if self.mode=='st_classifier' else None)
             ax = None
-            metrics, ax = get_test_metrics(test_buffers['labels'].numpy(), test_buffers['logit_diffs'].numpy(), domain=None, ax=ax) #TODO check default behavior of domain
+            metrics, ax = get_test_metrics(test_buffers['labels'].numpy(), test_buffers['logit_diffs'].numpy(), ax=ax) #TODO check default behavior of domain
             test_metrics.update(metrics)
             finish_roc_plot(f"{self.cfg.logdir}/{self.cfg.exp_name}", ax, is_primary=self.dist_info.is_primary)
 
@@ -291,14 +287,15 @@ class Trainer:
                 #load initial validation buffers
                 init_val_buffers = torch.load(f'{self.cfg.logdir}/{self.cfg.exp_name}/init_val_buffers.pt', weights_only=True)
                 #TODO: check if I need this anymore or if I can generaize it
-                make_logits_plt({k: v['logit_diffs'] for k, v in init_val_buffers.items()},
+                make_logits_plt({"Source": init_val_buffers['logit_diffs']},
                                 f"{self.cfg.logdir}/{self.cfg.exp_name}", name='initial',
                                 domains={k: v['domains'] for k, v in init_val_buffers.items()} if self.mode=='st_classifier' else None)
 
         #TODO: check default behavior of domain
         display_epoch_summary(partition="test", epoch=1, tot_epochs=0,
-                        bce=test_metrics.get('BCE_loss', None), acc=test_metrics.get('acc', None), time_s=test_metrics.get('time', None),
-                        logger=getattr(self, "logger", None), domain=None, auc=test_metrics.get('auc', None), r30=test_metrics.get('1/eB ~ 0.3', None))
+                        acc=test_metrics.get('acc', None), time_s=test_metrics.get('time', None),
+                        logger=getattr(self, "logger", None), domain=None, auc=test_metrics.get('auc', None), 
+                        r30=test_metrics.get('1/eB ~ 0.3', None), loss=test_metrics.get('loss', None))
 
         if self.dist_info.is_primary:
             json_object = json.dumps(test_metrics, indent=4)
