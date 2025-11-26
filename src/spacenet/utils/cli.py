@@ -45,6 +45,12 @@ def build_parser():
                         help='model name')
     parser.add_argument('--frozen_groups', type=json.loads, default='{}', metavar='N',
                         help='list of model groups to freeze')
+    parser.add_argument('--momentum', type=float, default=0.9, metavar='N',
+                        help='momentum for SGD optimizer')
+    parser.add_argument('--weight_decay', type=float, default=1e-4, metavar='N',
+                        help='weight decay for optimizer')
+    parser.add_argument('--optimizer_type', type=str, default='AdamW', metavar='N',
+                        help='type of optimizer to use')
     ############################################################                    
     parser.add_argument('--local_rank', type=int, default=0)
     

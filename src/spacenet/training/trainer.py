@@ -249,7 +249,7 @@ class Trainer:
             # plot final logits
             make_logits_plt({'Source': test_buffers['logit_diffs']},
                             f"{self.cfg.logdir}/{self.cfg.exp_name}", 
-                            domains={k: v['domains'] for k, v in test_buffers.items()} if self.mode=='st_classifier' else None)
+                            domains=None)
             ax = None
             metrics, ax = get_test_metrics(test_buffers['labels'].numpy(), test_buffers['logit_diffs'].numpy(), ax=ax) #TODO check default behavior of domain
             test_metrics.update(metrics)
@@ -263,7 +263,7 @@ class Trainer:
                 #TODO: check if I need this anymore or if I can generaize it
                 make_logits_plt({"Source": init_val_buffers['logit_diffs']},
                                 f"{self.cfg.logdir}/{self.cfg.exp_name}", name='initial',
-                                domains={k: v['domains'] for k, v in init_val_buffers.items()} if self.mode=='st_classifier' else None)
+                                domains=None)
 
         #TODO: check default behavior of domain
         if self.dist_info.is_primary:
