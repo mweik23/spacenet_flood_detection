@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field, fields, MISSING
-from ml_tools.training.shedulers import SchedulerConfig as CoreSchedConfig
+from ml_tools.training.schedulers import SchedConfig as CoreSchedConfig
 from .general import GeneralConfig
 
 @dataclass
@@ -9,8 +9,10 @@ class TrainerConfig:
     exp_name: str
     log_interval: int = 10
     val_interval: int = 1
-    initial_valid: bool = False
     mode: str = 'pre-event only'  # 'pre-event only' or 'pre-event'
+    amp_dtype_str: str = "bfloat16"
+    use_amp: bool = False
+    
     @classmethod
     def from_full(cls, full: GeneralConfig) -> "TrainerConfig":
         init_kwargs = {}

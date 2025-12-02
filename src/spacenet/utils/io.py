@@ -7,6 +7,7 @@ import torch
 import shutil
 from ml_tools.utils.random import set_global_seed
 from spacenet.configs import GeneralConfig
+from spacenet.utils.paths import get_project_root
     
     
 def make_clean_dir(path):
@@ -14,7 +15,10 @@ def make_clean_dir(path):
         shutil.rmtree(path)   # remove the directory and all its contents
     os.makedirs(path) 
 
-def init_run(args, dist_runtime, project_root, pt_overwrite_keys=(), cfg_extra: dict = None):
+def init_run(args, dist_runtime, pt_overwrite_keys=(), cfg_extra: dict = None):
+    if cfg_extra is None:
+        cfg_extra = {}
+    project_root = get_project_root()
     if args.seed is None: # use random seed if not specified
         args.seed = np.random.randint(100)
     if args.exp_name == '': # use random strings if not specified
@@ -28,15 +32,15 @@ def init_run(args, dist_runtime, project_root, pt_overwrite_keys=(), cfg_extra: 
             pt_exp = args.pretrained.split('/')[0]
         else:
             pt_exp = args.pretrained
-        with open(f"{args.logdir}/{pt_exp}/config.json", 'r') as file:
+        with open(f"{cfg_extra['logdir']}/{pt_exp}/config.json", 'r') as file:
             pt_args = json.load(file)
         pt_args_overwrite = {k: pt_args[k] for k in pt_overwrite_keys if k in pt_args}
         cfg_extra = {**cfg_extra, **pt_args_overwrite}
     cfg = GeneralConfig.from_args_and_dist(args, dist_runtime.cfg, cfg_extra)
     if (dist_runtime.rank == 0): # master
-        make_clean_dir(f"{args.logdir}/{args.exp_name}")
+        make_clean_dir(f"{cfg.logdir}/{args.exp_name}")
         d = cfg.as_dict()
-        with open(f"{args.logdir}/{args.exp_name}/config.json", 'w') as f:
+        with open(f"{cfg.logdir}/{args.exp_name}/config.json", 'w') as f:
             json.dump(d, f, indent=4)
             f.close()
     return cfg

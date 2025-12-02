@@ -7,36 +7,37 @@ from torch import nn, optim
 import os
 
 from .policies import StandardPolicy
+from spacenet.configs import DistRuntime, TrainerConfig
 
 from ml_tools.training.metrics import get_test_metrics, RunningStats
 from ml_tools.training.reporting import display_epoch_summary, make_logits_plt, make_train_plt, display_status, finish_roc_plot
-from ml_tools.training.schedulers import SchedConfig, make_scheduler
 from ml_tools.training.training_utils import Initialization, TrainEpochStart, ValidEpochStart, TestEpochStart, MetricHistory
 from ml_tools.utils.distributed import globalize_epoch_totals, epoch_metrics_from_globals
 from ml_tools.utils.buffers import EpochLogitBuffer  
-from ml_tools.utils.distributed import DistInfo
-
 
 @dataclass
 class Trainer:
     # core state you currently use as globals
-    cfg: any
+    cfg: TrainerConfig
     model: nn.Module
     optimizer: optim.Optimizer
-    dist_info: DistInfo
-    device: torch.device
-    sched_config: SchedConfig
+    dist_rt: DistRuntime
+    scheduler: any
     loss_fn: nn.Module 
     dataloaders: dict   # {'train': ..., 'valid': ..., 'test': ...}
-    metrics: MetricHistory
-    start_epoch: int = 0
-    mode: str = ''  
-    dtype: torch.dtype = torch.float32
+    start_epoch: int = 0 
+    
     def __post_init__(self):
         self.final_epoch = self.cfg.epochs + self.start_epoch
         self.state = {}
         policy_kwargs = {}
-        #TODO: come back to these once my policy is created
+        self.device = self.dist_rt.device
+        self.is_primary = self.dist_rt.is_primary
+        self.amp_dtype = getattr(torch, self.cfg.dtype_str)
+        self.scaler = torch.amp.GradScaler(device_type=self.device.type, 
+                                           enabled=(self.cfg.use_amp and self.cfg.amp_dtype_str=='float16'))
+        self.metrics = MetricHistory()
+        self.metrics.update(lr_by_group={k: [g['lr'] for g in groups] for k, groups in self.optimizer.param_groups.items()})
         self._handlers = {
             Initialization: self._initialize,
             TrainEpochStart: self._start_train_epoch,
@@ -44,22 +45,22 @@ class Trainer:
             TestEpochStart: self._start_test_epoch,
         }
         self.update_state(Initialization()) #guess values
-        self.scheduler = make_scheduler(self.optimizer, self.sched_config)
         self.buffer = EpochLogitBuffer(keep_indices=False, 
                                             keep_domains=False,
                                             assume_equal_lengths=True)
         self.policy = StandardPolicy(loss_fn=self.loss_fn, 
                                   bufs=self.buffer, 
-                                  device=self.device, 
-                                  dtype=self.dtype,
+                                  device=self.device,
+                                  use_amp=self.cfg.use_amp,
+                                  amp_dtype=self.amp_dtype,
                                   **policy_kwargs)
 
     def _save_ckp(self, state, is_best, epoch, save_all=False):
         p = Path(self.cfg.logdir) / self.cfg.exp_name
         p.mkdir(parents=True, exist_ok=True)
-        if save_all and self.dist_info.is_primary:
+        if save_all and self.is_primary:
             torch.save(state, p / f"checkpoint-epoch-{epoch}.pt")
-        if is_best and self.dist_info.is_primary:
+        if is_best and self.is_primary:
             for _ in range(3):
                 try:
                     torch.save(state, p / "best-val-model.pt"); break
@@ -101,16 +102,17 @@ class Trainer:
         loader_length = len(loader) if loader is not None else 0
         #need to make prediction for source and target data
         for batch_idx, data in enumerate(loader):
-            if self.state['phase'] == 'train':
-                self.optimizer.zero_grad()
-            batch_metrics, tot_loss = self.policy.compute_batch_metrics(data=data, 
+            
+            batch_metrics = self.policy.compute_batch_metrics(data=data, 
                                                                   model=self.model, 
                                                                   state=self.state)
             if self.state['phase'] == 'train':
-                tot_loss.backward()
-                self.optimizer.step()
+                self.scaler.scale(batch_metrics['loss']).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
 
-            
+                self.optimizer.zero_grad(set_to_none=True)
+                
             tracker.update(**batch_metrics)
 
             if (batch_idx+1) % self.cfg.log_interval == 0:
@@ -139,11 +141,10 @@ class Trainer:
         return metrics, gathered_buffers if self.state['get_buffers'] else None
 
     def train(self):
-        if self.cfg.pretrained !='':
+        if self.start_epoch != 0:
             self.update_state(ValidEpochStart())
             with torch.no_grad():
                 # first validation run to get initial MMD and BCE
-                #TODO: change the way secondary loader is passed and conditions are checked
                 val_metrics, val_buffers = self._run_epoch(self.start_epoch-1, loader=self.dataloaders['valid'])
             #save logits and labels for validation
             if val_buffers is not None: 
@@ -151,7 +152,7 @@ class Trainer:
 
             self.metrics.append(
                 epochs = self.start_epoch-1,
-                val_loss = val_metrics['loss'], #TODO: what do I do about total vs BCE loss
+                val_loss = val_metrics['loss'],
                 val_acc = val_metrics['acc'],
                 val_time = val_metrics['time'],
             )
@@ -160,7 +161,7 @@ class Trainer:
                                 best_epoch=self.start_epoch-1
                                 )
             
-            if self.dist_info.is_primary:
+            if self.is_primary:
                 display_epoch_summary(partition="validation", epoch=self.start_epoch-1, tot_epochs=self.final_epoch-1,
                                 acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], loss=self.metrics.get("val_loss")[-1],
                                 logger=getattr(self, "logger", None))
@@ -177,22 +178,21 @@ class Trainer:
             for g in self.optimizer.param_groups:      
                 lr_message += g['name'] + f": {g['lr']:.3e}  "
             lr_message += '\n' + 124*'-'
-            if self.dist_info.is_primary:
+            if self.is_primary:
                 print(lr_message)
             #----------training------------
             train_metrics, _ = self._run_epoch(epoch, loader=self.dataloaders['train'])
 
             self.metrics.append(
                     epochs = epoch,
-                    train_BCE = train_metrics['BCE_loss'],
-                    train_loss = train_metrics['BCE_loss'], #TODO: what do I do about total vs BCE loss
+                    train_loss = train_metrics['loss'],
                     train_acc = train_metrics['acc'],
                     train_time = train_metrics['time'],
-                    lr = self.optimizer.param_groups[0]['lr'] #TODO: change this keyword in metrics
+                    lr = self.optimizer.param_groups[0]['lr']
                 )
-            if self.dist_info.is_primary:
+            if self.is_primary:
                 display_epoch_summary(partition="train", epoch=epoch, tot_epochs=self.final_epoch-1,
-                                bce=self.metrics.get("train_BCE")[-1], acc=self.metrics.get("train_acc")[-1], time_s=self.metrics.get("train_time")[-1],
+                                bce=self.metrics.get("train_loss")[-1], acc=self.metrics.get("train_acc")[-1], time_s=self.metrics.get("train_time")[-1],
                                 logger=getattr(self, "logger", None))
             #----------validation------------
             if epoch % self.cfg.val_interval == 0:
@@ -219,7 +219,7 @@ class Trainer:
                 json_object = json.dumps(self.metrics.to_dict(), indent=4)
                 with open(f"{self.cfg.logdir}/{self.cfg.exp_name}/train-result.json", "w") as outfile:
                     outfile.write(json_object)
-                if self.dist_info.is_primary:      
+                if self.is_primary:      
                     display_epoch_summary(partition="validation", epoch=epoch, tot_epochs=self.final_epoch-1,
                                 acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], 
                                 best_epoch=self.metrics.get('best_epoch'), best_val=self.metrics.get('best_val'), 
@@ -228,10 +228,10 @@ class Trainer:
             dist.barrier() # syncronize
         # keys needed: ['epochs', 'train_BCE', 'val_BCE'] if do_MMD: += ['train_MMD', 'val_MMD', 'train_loss', 'val_loss']
         # otherwise use argument rename_map = {'old_key': 'new_key', ...}
-        if self.dist_info.is_primary:
+        if self.is_primary:
             make_train_plt(self.metrics.to_dict(), 
                             f"{self.cfg.logdir}/{self.cfg.exp_name}", 
-                            pretrained=(self.cfg.pretrained !=''),
+                            pretrained=(self.start_epoch != 0),
                             main_loss_name='loss')
     
     def test(self):
@@ -243,7 +243,6 @@ class Trainer:
         with torch.no_grad():
             test_metrics, test_buffers = self._run_epoch(0, loader=self.dataloaders['valid'])
     
-        #print(f'rank: {self.dist_info.rank}, test_buffers: {test_buffers}')
         if test_buffers is not None:
             torch.save(test_buffers, f'{self.cfg.logdir}/{self.cfg.exp_name}/best_val_buffers.pt')
             # plot final logits
@@ -251,13 +250,13 @@ class Trainer:
                             f"{self.cfg.logdir}/{self.cfg.exp_name}", 
                             domains=None)
             ax = None
-            metrics, ax = get_test_metrics(test_buffers['labels'].numpy(), test_buffers['logit_diffs'].numpy(), ax=ax) #TODO check default behavior of domain
+            metrics, ax = get_test_metrics(test_buffers['labels'].numpy(), test_buffers['logit_diffs'].numpy(), ax=ax)
             test_metrics.update(metrics)
-            finish_roc_plot(f"{self.cfg.logdir}/{self.cfg.exp_name}", ax, is_primary=self.dist_info.is_primary)
+            finish_roc_plot(f"{self.cfg.logdir}/{self.cfg.exp_name}", ax, is_primary=self.is_primary)
 
         if os.path.exists(f'{self.cfg.logdir}/{self.cfg.exp_name}/init_val_buffers.pt'):
             # plot initial logits
-            if self.dist_info.is_primary:
+            if self.is_primary:
                 #load initial validation buffers
                 init_val_buffers = torch.load(f'{self.cfg.logdir}/{self.cfg.exp_name}/init_val_buffers.pt', weights_only=True)
                 #TODO: check if I need this anymore or if I can generaize it
@@ -265,13 +264,12 @@ class Trainer:
                                 f"{self.cfg.logdir}/{self.cfg.exp_name}", name='initial',
                                 domains=None)
 
-        #TODO: check default behavior of domain
-        if self.dist_info.is_primary:
+        if self.is_primary:
             display_epoch_summary(partition="test", epoch=1, tot_epochs=0,
                             acc=test_metrics.get('acc', None), time_s=test_metrics.get('time', None),
                             logger=getattr(self, "logger", None), domain=None, auc=test_metrics.get('auc', None), 
                             r30=test_metrics.get('1/eB ~ 0.3', None), loss=test_metrics.get('loss', None))
-        if self.dist_info.is_primary:
+        if self.is_primary:
             json_object = json.dumps(test_metrics, indent=4)
             with open(f"{self.cfg.logdir}/{self.cfg.exp_name}/test-result.json", "w") as outfile:
                 outfile.write(json_object)

@@ -1,10 +1,10 @@
 from torch.utils.data import Dataset
 from typing import List, Tuple, Optional
 from torch.utils.data import DataLoader, DistributedSampler
-from ml_tools.utils.distributed import DistInfo
 from spacenet.dataset.collate import TileCollator
-from spacenet.dataset.data_processing import get_coords
-from spacenet.utils.io import CollateConfig
+from spacenet.dataset.data_utils import get_coords, get_im_size
+from spacenet.configs import CollateConfig
+import json
 
 
 from ml_tools.utils.random import worker_init_base as worker_init
@@ -12,17 +12,6 @@ from ml_tools.utils.random import worker_init_base as worker_init
 from pathlib import Path
 import pandas as pd
 from PIL import Image
-def get_channels(datasets: dict) -> int:
-    # Assuming datasets is a dict with splits as keys and PathsDataset as values
-    # Get the first image path from the 'train' split
-    first_image_path = Path(datasets['train'][0]['pre-event image'])
-    with Image.open(first_image_path) as img:
-        return len(img.getbands())
-
-def get_im_size(path: Path) -> Tuple[int, int]:
-    """Get image size (H, W) without loading full image into memory."""
-    with Image.open(path) as img:
-        return img.size[1], img.size[0]  # PIL gives (W, H)
 
 class PathsDataset(Dataset):
     """Return lightweight metadata so we can open in collate_fn."""
@@ -40,12 +29,14 @@ class PathsDataset(Dataset):
         instance = self.paths[i]
         return {k: v for k, v in instance.items()}
 
-def get_paths(data_dir: Path, splits=('train', 'valid')) -> List[dict]:
+def get_paths(data_dir: Path, splits=('train', 'valid'), num_data: int = -1) -> List[dict]:
     splits_path = data_dir / 'metadata' / 'splits.csv'
     splits_df = pd.read_csv(splits_path)
     paths = {}
     for split in splits:
         image_names = splits_df[splits_df['split']==split]['image_name']
+        if num_data > 0:
+            image_names = image_names[:num_data]
 
         pre_image_dir = data_dir / split / 'PRE-event'
         label_dir = data_dir / split / 'labels'

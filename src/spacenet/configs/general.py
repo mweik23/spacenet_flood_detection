@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 @dataclass
 class GeneralConfig:
@@ -6,9 +6,9 @@ class GeneralConfig:
     _config: dict = field(default_factory=dict)
 
     @classmethod
-    def from_args_and_dist(cls, args, dist_info, extra: dict = None):
+    def from_args_and_dist(cls, args, dist_config, extra: dict = None):
         args_dict = vars(args).copy()
-        dist_dict = dist_info.shared_dict()
+        dist_dict = asdict(dist_config)
         merged = {**args_dict, **dist_dict, **(extra or {})}
         return cls(merged)
 

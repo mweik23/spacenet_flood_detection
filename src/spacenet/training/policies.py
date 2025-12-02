@@ -18,15 +18,21 @@ class StandardPolicy(TrainingPolicy):
     loss_fn: nn.Module
     buffers: EpochLogitBuffer
     device: torch.device
-    dtype: torch.dtype
+    amp_dtype: torch.dtype
+    use_amp: bool = False
+    
     def compute_batch_metrics(self, *, data, model, state=None):
-        #prepare the batch
-
-        preds, _ = model(data['pre-event image'].to(self.device, self.dtype))
-
         #get labels and masks
-        labels = data['is_signal'].to(self.device, self.dtype).long()
-        
+        labels = data['is_signal'].to(self.device).long()
+        #prepare the batch
+        with torch.autocast(
+            device_type=self.device.type,
+            dtype=self.amp_dtype,  # fp16 or bf16
+            enabled=self.use_amp
+        ):
+            preds = model(data['pre-event image'].to(self.device))
+            loss = self.loss_fn(preds, labels)
+            
         if state['get_buffers']:
             self.buffers.add(
                 logit_diffs=preds[:, 1] - preds[:, 0],
@@ -35,6 +41,6 @@ class StandardPolicy(TrainingPolicy):
         batch_metrics = {}      
         batch_metrics['batch_size'] = labels.size(0)
         batch_metrics['correct'] = get_correct(preds, labels)
-        batch_metrics['loss'] = self.loss_fn(preds, labels)
+        batch_metrics['loss'] = loss
 
         return batch_metrics

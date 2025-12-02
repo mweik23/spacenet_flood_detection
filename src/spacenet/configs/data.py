@@ -30,6 +30,7 @@ class DataConfig:
     datadir: str
     batch_size: int
     num_workers: int = 0
+    num_data: int = -1  # use -1 for all data
     
     @classmethod
     def from_full(cls, full: GeneralConfig) -> "DataConfig":

@@ -6,14 +6,14 @@ import random, numpy as np
 import os
 from pathlib import Path
 import pandas as pd
-SRC_PATH = Path(__file__).parents[1] / 'src' / 'spacenet'
-DATA_DIR = Path(__file__).parents[1] / 'data' / 'processed'
-import sys
-sys.path.append(str(SRC_PATH))
-from dataset.data_processing import get_coords
-from dataset.datasets import PathsDataset
-from dataset.collate import TileCollator
-from shared_lib.utils.random import set_global_seed, worker_init_fn
+from spacenet.dataset.data_utils import get_coords
+from spacenet.dataset.datasets import PathsDataset
+from spacenet.dataset.collate import TileCollator
+from ml_tools.utils.random import set_global_seed
+from ml_tools.utils.random import worker_init_base as worker_init_fn
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_ROOT / 'data' / 'processed'
 from collections import deque
 import argparse
 parser = argparse.ArgumentParser()
@@ -135,8 +135,6 @@ def test_dataloader_real(repeated_dataset, sampler, num_workers, batch_size, num
             else:
                 assert not all(torch.equal(batches[0], batches[i]) for i in range(1, len(batches))), f"With num_sets={num_sets}, the probability of {thresh} identical batches is {(1/num_sets)**((thresh-1)*batch_size):.6f} but that is what happened. If you think this is a fluke, try increasing num_sets or thresh."
                 break
-
-
 
 if __name__ == '__main__':
     # ---- init DDP, get rank/world_size ----

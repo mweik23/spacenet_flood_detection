@@ -9,33 +9,14 @@ import cv2
 import random
 import tifffile as tiff
 import json
+from spacenet.dataset.data_utils import convert_to_image, resize, shuffle_dict_lists, get_coords
 PROJECT_ROOT = Path(__file__).parents[3].resolve()
 # add src to path
 
 DATA_DIR = Path(PROJECT_ROOT / "data")
 PROC_DIR = Path(DATA_DIR / "processed")
 
-def convert_to_image(img):
-    if img.shape[0] == 3:
-        img = img.transpose((1, 2, 0))
-    return img
-
-def get_coords(image_name):
-    image_id_len = len(image_name.split('_')[0])
-    return image_name[image_id_len+1:]
-
-''' Resize function to maintain aspect ratio and use appropriate interpolation based on size
-ref_size: tuple of (width, height) to resize the image to
-'''
-def resize(img, ref_width=1300):
-    assert len(img.shape) == 2 or (len(img.shape) == 3 and img.shape[-1] == 3), f"Invalid image shape: {img.shape}"
-    if ref_width > img.shape[1]:
-        interp = cv2.INTER_LANCZOS4
-    else:
-        interp = cv2.INTER_AREA
-    new_size = (ref_width, int(img.shape[0] * ref_width / img.shape[1])) # (W, H)
-    scaled_img = cv2.resize(img, new_size, interpolation=interp)
-    return scaled_img, scaled_img.shape
+import random
 
 def point_to_segment_distance(px, py, x0, y0, x1, y1):
     # vectorized distance from grid points (px,py) to segment (x0,y0)-(x1,y1)
@@ -248,7 +229,9 @@ class ImageProcessor:
                 drop_keys.append(k)
         for k in drop_keys:
             self.split_info.pop(k)
-        # optional: record split
+
+        self.split_info = shuffle_dict_lists(self.split_info)
+        
         split_info = pd.DataFrame(self.split_info)
         
         split_info.to_csv(self.metadata_path / "splits.csv", index=False)
