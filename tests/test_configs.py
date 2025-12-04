@@ -51,85 +51,84 @@ def dist_rt(dist_info):
 @pytest.fixture
 def full_cfg(args, dist_rt):
     return init_run(args, dist_rt)
+
+@pytest.fixture
+def optim_rename():
+    return {'lr': 'peak_lr'}
+
+@pytest.fixture
+def sched_rename():
+    return {'kind': 'sched_kind', 'mode': 'sched_mode'}
     
-def get_from_args(args_dict, attrs_names):
+def get_from_args(args_dict, attrs_names, rename=None):
+    if rename is None:
+        rename = {}
     out_dict = {}
     for name in attrs_names:
-        if name in args_dict:
+        if rename.get(name, None) in args_dict.keys():
+            out_dict[name] = args_dict[rename[name]]
+        elif name in args_dict:
             out_dict[name] = args_dict[name]
     return out_dict
-
-def update_args(new_args, base_args, attrs_names=None):
+#TODO: implement rename
+def update_args(new_args, base_args, attrs_names=None, rename=None):
+    if rename is None:
+        rename = {}
     updated = base_args.copy()
-    if attrs_names is not None:
-        for k, v in new_args.items():
-            if k in attrs_names:
-                updated[k] = v
+    for name in attrs_names:
+        if rename.get(name, name) in new_args:
+            updated[name] = new_args[rename.get(name, name)]
     return updated
 
-def get_args_for_class(ClassName, default_args, input_args):
+def get_args_for_class(ClassName, default_args, input_args, rename=None):
+    if rename is None:
+        rename = {}
+    #attribute list for the class
     attrs = [f.name for f in fields(ClassName)]
-    args = get_from_args(default_args, attrs)
-    args = update_args(input_args, args, attrs)
+    print('type of default args:', type(default_args))
+    args = get_from_args(default_args, attrs, rename=rename)
+    args = update_args(input_args, args, attrs_names=attrs, rename=rename)
     return args
 
-def get_exp_data_cfg(default_args, input_args, project_root_val, **kwargs):
-    collate_args = get_args_for_class(CollateConfig, default_args, input_args)
-    data_args = get_args_for_class(DataConfig, default_args, input_args)
-    data_args['collate_cfg'] = CollateConfig(**collate_args)
-    data_args['datadir'] = str(project_root_val / data_args['datadir'])
-    data_args.update(kwargs)
-    return DataConfig(**data_args)
+#---------------get expected configs-----------------
 
-def get_exp_model_cfg(default_args, input_args, **kwargs):
-    model_args = get_args_for_class(ModelConfig, default_args, input_args)
-    model_args.update(kwargs)
-    return ModelConfig(**model_args)
+def get_exp_cfg(ClassName, default_args, input_args, rename=None, **kwargs):
+    cfg_args = get_args_for_class(ClassName, default_args, input_args, rename=rename)
+    cfg_args.update(kwargs)
+    return ClassName(**cfg_args)
+
+#---------------tests-----------------
 
 def test_data_config(full_cfg, default_args, arg_dict, dist_info, project_root):
     data_cfg = DataConfig.from_full(full_cfg)
+    collate_args = get_args_for_class(CollateConfig, default_args, arg_dict)
     expected_num_workers = dist_info.num_workers
-    expected_datacfg = get_exp_data_cfg(default_args, arg_dict, project_root, num_workers = expected_num_workers)
-    assert data_cfg == expected_datacfg, f"DataConfig mismatch:\nGot: {data_cfg}\nExpected: {expected_datacfg}"
-
+    expected_data_cfg = get_exp_cfg(DataConfig, default_args, arg_dict, 
+                                        num_workers = expected_num_workers, 
+                                        collate_cfg = CollateConfig(**collate_args),
+                                        datadir = str(project_root / arg_dict.get('datadir', default_args['datadir'])))
+    assert data_cfg == expected_data_cfg, f"DataConfig mismatch:\nGot: {data_cfg}\nExpected: {expected_data_cfg}"
 @pytest.mark.parametrize("in_channels", [1, 3, 4])
 def test_model_config(full_cfg, default_args, arg_dict, in_channels):
     model_cfg = ModelConfig.from_full(full_cfg, in_channels=in_channels)
     exp_num_classes = get_num_classes(Path(full_cfg.datadir))
-    expected_modelcfg = get_exp_model_cfg(default_args, arg_dict, in_channels=in_channels, num_classes=exp_num_classes)
-    assert model_cfg == expected_modelcfg, f"ModelConfig mismatch:\nGot: {model_cfg}\nExpected: {expected_modelcfg}"
-'''
-def main(argv=None):
-    
-    
+    expected_model_cfg = get_exp_cfg(ModelConfig, default_args, arg_dict, in_channels=in_channels, num_classes=exp_num_classes)
+    assert model_cfg == expected_model_cfg, f"ModelConfig mismatch:\nGot: {model_cfg}\nExpected: {expected_model_cfg}"
+
+def test_optim_config(full_cfg, default_args, arg_dict, optim_rename):
+    optim_cfg = OptimConfig.from_full(full_cfg, rename=optim_rename)
+    expected_optim_cfg = get_exp_cfg(OptimConfig, default_args, arg_dict, rename=optim_rename)
+    assert optim_cfg == expected_optim_cfg, f"ModelConfig mismatch:\nGot: {optim_cfg}\nExpected: {expected_optim_cfg}"
+
+def test_sched_config(full_cfg, default_args, arg_dict, sched_rename):
+    sched_config = SchedConfig.from_full(full_cfg, rename=sched_rename)
+    expected_sched_cfg = get_exp_cfg(SchedConfig, default_args, arg_dict, rename=sched_rename, lr_init_factor=full_cfg.start_lr/full_cfg.peak_lr)
+    assert sched_config == expected_sched_cfg, f"SchedConfig mismatch:\nGot: {sched_config}\nExpected: {expected_sched_cfg}"
+
+def test_trainer_config(full_cfg, default_args, arg_dict, project_root):
     trainer_cfg = TrainerConfig.from_full(full_cfg)
-    
-    optim_cfg   = OptimConfig.from_full(full_cfg, rename={'lr': 'peak_lr'})
-    sched_config = SchedConfig.from_full(full_cfg, rename={'kind': 'sched_kind', 'mode': 'sched_mode'}) #TODO: ensure that these parameters exist in full config
-    
-    width = 80
-    print("Trainer Config:", trainer_cfg)
-    print(width*"-")
-    print("Data Config:", data_cfg)
-    print(width*"-")
-    print("Model Config:", model_cfg)
-    print(width*"-")
-    print("Optimizer Config:", optim_cfg)
-    print(width*"-")
-    print("Scheduler Config:", sched_config)
-    print(width*"-")
-    print("Dist Config:", dist_rt.cfg)
-    print(width*"-")
-    print("Configuration successfully initialized.")
-    
-if __name__ == "__main__":
-    in_channels = 3 
-    
-    
-    
-    
-    
-    
-    
-    main(argv)
-'''
+    raw_logdir = arg_dict.get('logdir', default_args['logdir'])
+    exp_logdir = str(project_root / raw_logdir)
+    expected_trainer_cfg = get_exp_cfg(TrainerConfig, default_args, arg_dict, logdir=exp_logdir)
+    assert trainer_cfg == expected_trainer_cfg, f"TrainerConfig mismatch:\nGot: {trainer_cfg}\nExpected: {expected_trainer_cfg}"
+
