@@ -13,7 +13,8 @@ from ml_tools.training.metrics import get_test_metrics, RunningStats
 from ml_tools.training.reporting import display_epoch_summary, make_logits_plt, make_train_plt, display_status, finish_roc_plot
 from ml_tools.training.training_utils import Initialization, TrainEpochStart, ValidEpochStart, TestEpochStart, MetricHistory
 from ml_tools.utils.distributed import globalize_epoch_totals, epoch_metrics_from_globals
-from ml_tools.utils.buffers import EpochLogitBuffer  
+from ml_tools.utils.buffers import EpochLogitBuffer
+from ml_tools.utils.random import make_and_set_seed
 
 @dataclass
 class Trainer:
@@ -25,7 +26,8 @@ class Trainer:
     scheduler: any
     loss_fn: nn.Module 
     dataloaders: dict   # {'train': ..., 'valid': ..., 'test': ...}
-    start_epoch: int = 0 
+    start_epoch: int = 0
+    base_seed: int = 0
     
     def __post_init__(self):
         self.final_epoch = self.cfg.epochs + self.start_epoch
@@ -91,6 +93,7 @@ class Trainer:
             handler(event)
 
     def _run_epoch(self, epoch: int, loader=None):
+        make_and_set_seed(self.base_seed, phase=self.state['phase'], epoch=epoch, rank=self.dist_rt.rank)
         if self.state['phase'] == 'train':
             self.model.train()
             loader.sampler.set_epoch(epoch)

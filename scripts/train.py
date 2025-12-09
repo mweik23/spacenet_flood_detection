@@ -7,6 +7,7 @@ from dataclasses import asdict
 from ml_tools.utils.distributed import setup_dist, maybe_convert_syncbn, wrap_like_ddp
 from ml_tools.training.optimizer import get_optimizer
 from ml_tools.training.schedulers import get_scheduler
+from ml_tools.utils.random import make_and_set_seed
 
 
 from spacenet.dataset.datasets import get_dataloaders, get_paths
@@ -30,6 +31,8 @@ def main(argv=None):
     full_cfg = init_run(args, dist_rt)
     
     #set up data loaders
+    #set seed for setup phase
+    make_and_set_seed(args.seed, phase='collate', rank=dist_rt.rank)
     data_cfg = DataConfig.from_full(full_cfg)
     path_datasets = get_paths(Path(data_cfg.datadir), num_data=data_cfg.num_data)
     dataloaders = get_dataloaders(
@@ -48,6 +51,7 @@ def main(argv=None):
         full_cfg, 
         in_channels=get_channels(Path(path_datasets['train'][0]['pre-event image']))
     )
+    make_and_set_seed(args.seed, phase='model', rank=dist_rt.rank)
     model = UNet(**asdict(model_cfg))
     model = maybe_convert_syncbn(model, dist_rt.cfg.device_type, dist_rt.cfg.world_size)
     model = model.to(dist_rt.device)
@@ -82,6 +86,7 @@ def main(argv=None):
         loss_fn=loss_fn,
         dataloaders=dataloaders,
         start_epoch=start_epoch,
+        base_seed=full_cfg.seed
     )
 
     #train and test

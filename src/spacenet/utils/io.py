@@ -5,7 +5,7 @@ import string
 import numpy as np
 import torch
 import shutil
-from ml_tools.utils.random import set_global_seed
+from ml_tools.utils.random import make_and_set_seed
 from spacenet.configs import GeneralConfig
 from spacenet.utils.paths import get_project_root
     
@@ -20,11 +20,9 @@ def init_run(args, dist_runtime, pt_overwrite_keys=(), cfg_extra: dict = None):
         cfg_extra = {}
     project_root = get_project_root()
     if args.seed is None: # use random seed if not specified
-        args.seed = np.random.randint(100)
+        args.seed = np.random.randint(10000)
     if args.exp_name == '': # use random strings if not specified
         args.exp_name = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-    set_global_seed(args.seed, rank=dist_runtime.rank)
-    
     cfg_extra['logdir'] = str(project_root / args.logdir)
     cfg_extra['datadir'] = str(project_root / args.datadir)
     if args.pretrained != '':
