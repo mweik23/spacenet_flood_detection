@@ -38,6 +38,8 @@ def main(argv=None):
         world_size=dist_rt.cfg.world_size,
         seed=full_cfg.seed,
         mode=full_cfg.mode,
+        persistent_workers=data_cfg.num_workers>0,
+        pin_memory=True,
         **asdict(data_cfg)
     )
     

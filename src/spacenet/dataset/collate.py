@@ -48,7 +48,10 @@ class TileCollator:
         self.verbose = verbose
         self.random_order = random_order
         self.num_sets = num_sets
-        self.refresh_sets(num_sets=self.num_sets, num_tiles=num_tiles, verbose=verbose)
+        self.tile_cache = []
+        self.overlapping_tiles = set()
+        self.close_tiles = set()
+        self.refresh_sets(verbose=verbose)
         
 
     def sample_tile_coords(self):
@@ -111,16 +114,12 @@ class TileCollator:
             print(f"Sampled tile at x0={x0}, y0={y0}")
         return (x0, y0)
     
-    def refresh_tiles(self, num_tiles: Optional[int] = None):
+    def refresh_tiles(self):
         self.clear()
-        if num_tiles is not None:
-            self.num_tiles = num_tiles
         res = [self.sample_tile_coords() for _ in range(self.num_tiles)]
         return res
     
-    def refresh_grid(self, num_tiles: Optional[int] = None, refresh_tiles: bool = True):
-        if num_tiles is not None:
-            self.num_tiles = num_tiles
+    def refresh_grid(self, refresh_tiles: bool = True):
         self.ux = np.random.randint(0, self.stride)
         self.uy = np.random.randint(0, self.stride)
         max_idx = -((-(self.img_size - self.core_size))// self.stride) + 1
@@ -134,13 +133,13 @@ class TileCollator:
         if self.verbose:
             print(f"Refreshed grid with ux={self.ux}, uy={self.uy}, num_grid_x={self.num_x}, num_grid_y={self.num_y}, max_tiles={self.max_tiles}")
         if refresh_tiles:
-            return self.refresh_tiles(num_tiles=self.num_tiles)
+            return self.refresh_tiles()
         return None
         
-    def refresh_sets(self, num_sets: int, num_tiles: Optional[int] = None, verbose: bool = False):
-        self.sets = [self.refresh_grid(num_tiles=num_tiles) for _ in range(num_sets)]
+    def refresh_sets(self, verbose: bool = False):
+        self.sets = [self.refresh_grid() for _ in range(self.num_sets)]
         if verbose:
-            print(f"Refreshed {num_sets} tile sets, each with {len(self.sets[0])} tiles.")
+            print(f"Refreshed {self.num_sets} tile sets, each with {len(self.sets[0])} tiles.")
     def get_overlapping_tiles(self, x0, y0):
         xs = self.x_grid[np.abs(self.x_grid - x0) < self.core_size]
         ys = self.y_grid[np.abs(self.y_grid - y0) < self.core_size]

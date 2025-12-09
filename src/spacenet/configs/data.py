@@ -8,6 +8,7 @@ class CollateConfig:
     stride: int
     num_tiles: int
     num_sets: int
+    random_order: bool = True
     
     @classmethod
     def from_full(cls, full: GeneralConfig) -> "CollateConfig":

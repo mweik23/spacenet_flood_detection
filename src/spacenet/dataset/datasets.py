@@ -80,13 +80,15 @@ def get_dataloaders(datasets: dict,
         assert isinstance(dataset, Dataset), f"Dataset for split {split} is not a torch Dataset"
         train_sampler
         loaders[split] = DataLoader(
-            datasets['split'],
+            datasets[split],
             sampler=train_sampler if split=='train' else None,
             batch_size=batch_size,
             shuffle=False,
             worker_init_fn=worker_init,
             num_workers=num_workers,
-            collate_fn=collate_fn
+            collate_fn=collate_fn,
+            pin_memory=kwargs.get('pin_memory', False),
+            persistent_workers=kwargs.get('persistent_workers', False)
         )
 
     return loaders
