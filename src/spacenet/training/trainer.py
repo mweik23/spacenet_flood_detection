@@ -35,11 +35,13 @@ class Trainer:
         policy_kwargs = {}
         self.device = self.dist_rt.device
         self.is_primary = self.dist_rt.is_primary
-        self.amp_dtype = getattr(torch, self.cfg.dtype_str)
-        self.scaler = torch.amp.GradScaler(device_type=self.device.type, 
+        self.amp_dtype = getattr(torch, self.cfg.amp_dtype_str)
+        self.scaler = torch.amp.GradScaler(self.device.type, 
                                            enabled=(self.cfg.use_amp and self.cfg.amp_dtype_str=='float16'))
         self.metrics = MetricHistory()
-        self.metrics.update(lr_by_group={k: [g['lr'] for g in groups] for k, groups in self.optimizer.param_groups.items()})
+        lr_by_group = {group.get('name', 'all'): group['lr'] for group in self.optimizer.param_groups}
+        assert len(lr_by_group) == len(self.optimizer.param_groups), "parameter groups must have names key if there are more than one group"
+        self.metrics.update(lr_by_group=lr_by_group)
         self._handlers = {
             Initialization: self._initialize,
             TrainEpochStart: self._start_train_epoch,
@@ -51,7 +53,7 @@ class Trainer:
                                             keep_domains=False,
                                             assume_equal_lengths=True)
         self.policy = StandardPolicy(loss_fn=self.loss_fn, 
-                                  bufs=self.buffer, 
+                                  buffers=self.buffer, 
                                   device=self.device,
                                   use_amp=self.cfg.use_amp,
                                   amp_dtype=self.amp_dtype,
@@ -138,9 +140,9 @@ class Trainer:
         metrics = epoch_metrics_from_globals(g_correct=g_corr, g_count=g_cnt, g_loss_sum=g_loss)
         metrics['time'] = tracker.epoch_time()
         #gather logits and labels if buffers are requested
-        gathered_buffers = self.buffers.gather_to_rank0(cast_fp16=False) if self.state['get_buffers'] else None
-        if self.buffers is not None:
-            self.buffers.clear()
+        gathered_buffers = self.buffer.gather_to_rank0(cast_fp16=False) if self.state['get_buffers'] else None
+        if self.buffer is not None:
+            self.buffer.clear()
         return metrics, gathered_buffers if self.state['get_buffers'] else None
 
     def train(self):
@@ -179,7 +181,7 @@ class Trainer:
             #----------display learning rates------------
             lr_message =  'Learning rates\n'   
             for g in self.optimizer.param_groups:      
-                lr_message += g['name'] + f": {g['lr']:.3e}  "
+                lr_message += g.get('name', 'all') + f": {g['lr']:.3e}  "
             lr_message += '\n' + 124*'-'
             if self.is_primary:
                 print(lr_message)

@@ -6,7 +6,7 @@ from dataclasses import asdict
 
 from ml_tools.utils.distributed import setup_dist, maybe_convert_syncbn, wrap_like_ddp
 from ml_tools.training.optimizer import get_optimizer
-from ml_tools.training.schedulers import get_scheduler
+from ml_tools.training.schedulers import make_scheduler
 from ml_tools.utils.random import make_and_set_seed
 
 
@@ -63,7 +63,7 @@ def main(argv=None):
     
     #set up scheduler
     sched_config = SchedConfig.from_full(full_cfg, rename={'kind': 'sched_kind', 'mode': 'sched_mode'}) #TODO: ensure that these parameters exist in full config
-    scheduler = get_scheduler(optimizer, sched_config)
+    scheduler = make_scheduler(optimizer, sched_config)
     
     #load from checkpoint if specified
     if full_cfg.pretrained != '':
@@ -75,7 +75,7 @@ def main(argv=None):
         start_epoch = 0
     
     #set up trainer
-    loss_fn = nn.CrossEntropyLoss()
+    loss_fn = nn.BCEWithLogitsLoss()
     trainer_cfg = TrainerConfig.from_full(full_cfg)
     trainer = Trainer(
         cfg=trainer_cfg,
@@ -92,6 +92,8 @@ def main(argv=None):
     #train and test
     if not full_cfg.test_mode:
         trainer.train()
+    if full_cfg.test_seed is not None:
+        trainer.base_seed = full_cfg.test_seed
     trainer.test()
     
     #clean up distributed training

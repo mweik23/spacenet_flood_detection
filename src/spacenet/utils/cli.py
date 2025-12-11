@@ -17,6 +17,8 @@ def build_parser():
                         help='number of warm-up epochs')             
     parser.add_argument('--seed', type=int, default=99, metavar='N',
                         help='random seed')
+    parser.add_argument('--test_seed', type=int, default=None, metavar='N',
+                        help='random seed for test mode')
     parser.add_argument('--log_interval', type=int, default=100, metavar='N',
                         help='how many batches to wait before logging training status')
     parser.add_argument('--val_interval', type=int, default=1, metavar='N',
@@ -39,10 +41,8 @@ def build_parser():
                         help='starting learning rate factor for warmup')
     parser.add_argument('--pretrained', type=str, default='', metavar='N',
                         help='directory with model to start the run with')
-    parser.add_argument('--model_name', type=str, default='LorentzNet', metavar='N',
+    parser.add_argument('--model_name', type=str, default='UNet', metavar='N',
                         help='model name')
-    parser.add_argument('--frozen_groups', type=json.loads, default='{}', metavar='N',
-                        help='list of model groups to freeze')
     parser.add_argument('--momentum', type=float, default=0.9, metavar='N',
                         help='momentum for SGD optimizer')
     parser.add_argument('--weight_decay', type=float, default=1e-4, metavar='N',
@@ -57,7 +57,7 @@ def build_parser():
                         help='load optimizer state from pretrained model')
     parser.add_argument('--use_amp', action='store_true', default=False,
                         help='use automatic mixed precision training')
-    parser.add_argument('--amp_dtype', type=str, default='bfloat16', metavar='N',
+    parser.add_argument('--amp_dtype_str', type=str, default='bfloat16', metavar='N',
                         help='dtype for automatic mixed precision training')
     parser.add_argument('--mode', type=str, default='pre-event only', metavar='N',
                         help='training mode: pre-event only or pre- and post-event')
