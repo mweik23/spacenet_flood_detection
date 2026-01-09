@@ -9,9 +9,17 @@ import os
 from .policies import StandardPolicy
 from spacenet.configs import DistRuntime, TrainerConfig
 
-from ml_tools.training.metrics import get_test_metrics, RunningStats
+from ml_tools.metrics.core import get_test_metrics, RunningStats
+from ml_tools.metrics.segmentation import segmentation_agg_metrics
 from ml_tools.training.reporting import display_epoch_summary, make_logits_plt, make_train_plt, display_status, finish_roc_plot
-from ml_tools.training.training_utils import Initialization, TrainEpochStart, ValidEpochStart, TestEpochStart, MetricHistory
+from ml_tools.training.training_utils import (
+    Initialization, 
+    TrainEpochStart, 
+    ValidEpochStart,
+    TestEpochStart, 
+    MetricHistory,
+    prefix_metrics
+)
 from ml_tools.utils.distributed import globalize_epoch_totals, epoch_metrics_from_globals
 from ml_tools.utils.buffers import EpochLogitBuffer
 from ml_tools.utils.random import make_and_set_seed
@@ -58,13 +66,21 @@ class Trainer:
                                   use_amp=self.cfg.use_amp,
                                   amp_dtype=self.amp_dtype,
                                   **policy_kwargs)
+        self.trackers = {phase: RunningStats(
+            phase=phase, 
+            window=self.cfg.log_interval,
+            weight_key='num_pixels',
+            mean_keys=('loss',),
+            sum_keys=("tp","fp","fn","tn"),
+            ddp_sync=self.dist_rt.cfg.world_size>1,
+        ) for phase in ('train', 'valid', 'test')}
 
     def _save_ckp(self, state, is_best, epoch, save_all=False):
         p = Path(self.cfg.logdir) / self.cfg.exp_name
         p.mkdir(parents=True, exist_ok=True)
-        if save_all and self.is_primary:
-            torch.save(state, p / f"checkpoint-epoch-{epoch}.pt")
-        if is_best and self.is_primary:
+        if save_all:
+            torch.save(state, p / f"checkpoint-epoch-{epoch+1}.pt")
+        if is_best:
             for _ in range(3):
                 try:
                     torch.save(state, p / "best-val-model.pt"); break
@@ -102,15 +118,18 @@ class Trainer:
         else:
             self.model.eval()
 
-        tracker = RunningStats(window=self.cfg.log_interval) #checked
+        tracker = self.trackers[self.state['phase']]
+        tracker.reset_epoch()
 
         loader_length = len(loader) if loader is not None else 0
         #need to make prediction for source and target data
         for batch_idx, data in enumerate(loader):
             
-            batch_metrics = self.policy.compute_batch_metrics(data=data, 
-                                                                  model=self.model, 
-                                                                  state=self.state)
+            batch_metrics = self.policy.compute_batch_metrics(
+                data=data, 
+                model=self.model, 
+                state=self.state
+            )
             if self.state['phase'] == 'train':
                 self.scaler.scale(batch_metrics['loss']).backward()
                 self.scaler.step(self.optimizer)
@@ -118,60 +137,81 @@ class Trainer:
 
                 self.optimizer.zero_grad(set_to_none=True)
                 
-            tracker.update(**batch_metrics)
+            tracker.update(batch_metrics)
 
             if (batch_idx+1) % self.cfg.log_interval == 0:
-                display_status(phase=self.state['phase'], epoch=epoch, 
-                                tot_epochs=0 if self.state['phase']=='test' else self.final_epoch-1, #TODO: check if this gives correct tot_epochs
+                snap = tracker.rolling_snapshot()
+                rolling_metrics = segmentation_agg_metrics(snap['tp'], snap['fp'], snap['fn'])
+                rolling_metrics['loss'] = snap['loss']
+                display_status(phase=self.state['phase'], epoch=epoch+1, 
+                                tot_epochs=1 if self.state['phase']=='test' else self.final_epoch, #TODO: check if this gives correct tot_epochs
                                 batch_idx=batch_idx+1, num_batches=loader_length,
-                                running_acc=tracker.running_acc, avg_batch_time=tracker.avg_batch_time(),
-                                running_loss=tracker.running_loss, logger=None)
+                                metrics=rolling_metrics, avg_batch_time=tracker.avg_batch_time(),
+                                is_master=self.is_primary, logger=getattr(self, "logger", None))
     
         torch.cuda.empty_cache() #can put this in the batch loop to free memory at the end of each batch but it slows things down
         # ---------- reduce -----------
         #globalize epoch metrics
         device = next(self.model.module.parameters()).device
-        g_corr, g_cnt, _, _, g_loss = globalize_epoch_totals(
-            local_correct=tracker.epoch_correct,
-            local_count=tracker.epoch_count,
-            local_loss_sum=tracker.epoch_loss_sum,
-            device=device,
-        )
-        metrics = epoch_metrics_from_globals(g_correct=g_corr, g_count=g_cnt, g_loss_sum=g_loss)
-        metrics['time'] = tracker.epoch_time()
+        snap = tracker.epoch_snapshot_ddp(device=device)
         #gather logits and labels if buffers are requested
         gathered_buffers = self.buffer.gather_to_rank0(cast_fp16=False) if self.state['get_buffers'] else None
         if self.buffer is not None:
             self.buffer.clear()
-        return metrics, gathered_buffers if self.state['get_buffers'] else None
-
+        return snap, gathered_buffers if self.state['get_buffers'] else None, tracker.epoch_time()
+    
+    def _finalize_epoch(self,
+                        *,
+                        phase: str,
+                        epoch: int,
+                        snapshot: dict,
+                        epoch_time: float):
+        # will add 1 to epoch for display purposes, but keep it 0-indexed internally for checkpointing and scheduling
+        if self.is_primary:
+            phase_metrics = segmentation_agg_metrics(snapshot['tp'], snapshot['fp'], snapshot['fn'])
+            phase_metrics['loss'] = snapshot['loss']
+            phase_metrics['time'] = epoch_time
+            if phase == 'train':
+                phase_metrics['lr'] = self.optimizer.param_groups[0]['lr']
+            self.metrics.append(epoch=epoch+1, **prefix_metrics(phase, phase_metrics))
+            is_best = False
+            if phase == 'valid' and phase_metrics['loss'] < self.metrics.get('best_val', float('inf')):
+                is_best = True
+                self.metrics.set(
+                    best_val=phase_metrics['loss'],
+                    best_epoch=epoch+1
+                )
+        
+            display_epoch_summary(
+                partition=phase,
+                epoch=epoch+1,
+                tot_epochs=self.final_epoch,
+                time=epoch_time,
+                metrics=phase_metrics,
+                best_epoch=self.metrics.get("best_epoch"),
+                best_val=self.metrics.get("best_val"),
+                logger=getattr(self, "logger", None),
+                is_master=self.is_primary,
+            )
+            return is_best if phase=='valid' else None
+        
     def train(self):
         if self.start_epoch != 0:
             self.update_state(ValidEpochStart())
             with torch.no_grad():
                 # first validation run to get initial MMD and BCE
-                val_metrics, val_buffers = self._run_epoch(self.start_epoch-1, loader=self.dataloaders['valid'])
+                snapshot, val_buffers, epoch_time = self._run_epoch(self.start_epoch-1, loader=self.dataloaders['valid'])
             #save logits and labels for validation
             if val_buffers is not None: 
                 torch.save(val_buffers, f'{self.cfg.logdir}/{self.cfg.exp_name}/init_val_buffers.pt')
-
-            self.metrics.append(
-                epochs = self.start_epoch-1,
-                val_loss = val_metrics['loss'],
-                val_acc = val_metrics['acc'],
-                val_time = val_metrics['time'],
-            )
-
-            self.metrics.update(best_val=self.metrics.get('val_loss')[-1],
-                                best_epoch=self.start_epoch-1
-                                )
-            
-            if self.is_primary:
-                display_epoch_summary(partition="validation", epoch=self.start_epoch-1, tot_epochs=self.final_epoch-1,
-                                acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], loss=self.metrics.get("val_loss")[-1],
-                                logger=getattr(self, "logger", None))
+            self._finalize_epoch(
+                phase='valid',
+                epoch=self.start_epoch-1,
+                snapshot=snapshot,
+                epoch_time=epoch_time
+            ) 
         else:
-            self.metrics.update(best_val=float('inf'), best_epoch=-1)
+            self.metrics.set(best_val=float('inf'), best_epoch=-1)
         ### training and validation
         if 'train' in self.dataloaders:
             self.dataloaders['train'].sampler.set_epoch(self.start_epoch-1)
@@ -186,50 +226,31 @@ class Trainer:
             if self.is_primary:
                 print(lr_message)
             #----------training------------
-            train_metrics, _ = self._run_epoch(epoch, loader=self.dataloaders['train'])
-
-            self.metrics.append(
-                    epochs = epoch,
-                    train_loss = train_metrics['loss'],
-                    train_acc = train_metrics['acc'],
-                    train_time = train_metrics['time'],
-                    lr = self.optimizer.param_groups[0]['lr']
-                )
-            if self.is_primary:
-                display_epoch_summary(partition="train", epoch=epoch, tot_epochs=self.final_epoch-1,
-                                bce=self.metrics.get("train_loss")[-1], acc=self.metrics.get("train_acc")[-1], time_s=self.metrics.get("train_time")[-1],
-                                logger=getattr(self, "logger", None))
+            snapshot, _, epoch_time = self._run_epoch(epoch, loader=self.dataloaders['train'])
+            self._finalize_epoch(
+                phase='train',
+                epoch=epoch,
+                snapshot=snapshot,
+                epoch_time=epoch_time
+            ) 
             #----------validation------------
             if epoch % self.cfg.val_interval == 0:
                 self.update_state(ValidEpochStart())
                 with torch.no_grad():
-                    val_metrics, _ = self._run_epoch(epoch,
-                                                     loader=self.dataloaders['valid'])
-                val_loss = val_metrics['loss']
-                self.metrics.append(
-                        val_loss = val_loss,
-                        val_acc = val_metrics['acc'],
-                        val_time = val_metrics['time'],
-                    )
-                
-                if val_loss < self.metrics.get('best_val'):
-                    is_best=True
-                    self.metrics.update(best_val=val_loss,
-                                        best_epoch=epoch
-                                        )
-                    
-                checkpoint = {'epoch': epoch + 1, 'state_dict': self.model.state_dict(), 'optimizer': self.optimizer.state_dict()}
-                self._save_ckp(checkpoint, is_best, epoch)
+                    snapshot, _, epoch_time= self._run_epoch(epoch, loader=self.dataloaders['valid'])
+                is_best = self._finalize_epoch(
+                    phase='valid',
+                    epoch=epoch,
+                    snapshot=snapshot,
+                    epoch_time=epoch_time
+                )
+                if self.is_primary:
+                    checkpoint = {'epoch': epoch, 'state_dict': self.model.state_dict(), 'optimizer': self.optimizer.state_dict()}
+                    self._save_ckp(checkpoint, is_best, epoch)
 
                 json_object = json.dumps(self.metrics.to_dict(), indent=4)
                 with open(f"{self.cfg.logdir}/{self.cfg.exp_name}/train-result.json", "w") as outfile:
                     outfile.write(json_object)
-                if self.is_primary:      
-                    display_epoch_summary(partition="validation", epoch=epoch, tot_epochs=self.final_epoch-1,
-                                acc=self.metrics.get("val_acc")[-1], time_s=self.metrics.get("val_time")[-1], 
-                                best_epoch=self.metrics.get('best_epoch'), best_val=self.metrics.get('best_val'), 
-                                loss=self.metrics.get("val_loss")[-1], logger=getattr(self, "logger", None))
-            self.scheduler.step_epoch(val_metric=val_loss)
             dist.barrier() # syncronize
         # keys needed: ['epochs', 'train_BCE', 'val_BCE'] if do_MMD: += ['train_MMD', 'val_MMD', 'train_loss', 'val_loss']
         # otherwise use argument rename_map = {'old_key': 'new_key', ...}

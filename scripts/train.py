@@ -67,13 +67,13 @@ def main(argv=None):
     
     #load from checkpoint if specified
     if full_cfg.pretrained != '':
-        start_epoch = load_ckp(f"{full_cfg.logdir}/{full_cfg.pretrained}/best-val-model.pt",
+        last_epoch = load_ckp(f"{full_cfg.logdir}/{full_cfg.pretrained}/best-val-model.pt",
                                ddp_model,
                                optimizer=optimizer if full_cfg.ld_optim_state else None,
                                device=dist_rt.device)
     else:
-        start_epoch = 0
-    
+        last_epoch = -1
+    start_epoch = last_epoch + 1
     #set up trainer
     loss_fn = nn.BCEWithLogitsLoss()
     trainer_cfg = TrainerConfig.from_full(full_cfg)

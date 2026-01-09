@@ -7,7 +7,7 @@ from typing import Any, Tuple
 import sys
 from pathlib import Path
 
-from ml_tools.training.metrics import get_correct
+from ml_tools.metrics.core import get_batch_metrics
 from ml_tools.utils.buffers import EpochLogitBuffer
 
 class TrainingPolicy:
@@ -31,17 +31,17 @@ class StandardPolicy(TrainingPolicy):
             dtype=self.amp_dtype,  # fp16 or bf16
             enabled=self.use_amp
         ):
-            preds = model(data['pre-event image'].to(self.device))
-            loss = self.loss_fn(preds, labels)
+            batch = {
+                'pred': model(data['pre-event image'].to(self.device)),
+                'label': labels
+            }
+            
+            batch_metrics = get_batch_metrics(batch, {'ce': self.loss_fn}, task="segmentation")
             
         if state['get_buffers']:
             self.buffers.add(
-                logit_diffs=preds[:, 1] - preds[:, 0],
-                labels=labels
+                preds=batch['pred'],
+                labels=batch['label']
             )
-        batch_metrics = {}      
-        batch_metrics['batch_size'] = labels.size(0)
-        batch_metrics['correct'] = get_correct(preds, labels)
-        batch_metrics['loss'] = loss
-
+        
         return batch_metrics
