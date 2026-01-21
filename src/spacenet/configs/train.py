@@ -12,6 +12,7 @@ class TrainerConfig:
     mode: str = 'pre-event only'  # 'pre-event only' or 'pre-event'
     amp_dtype_str: str = "bfloat16"
     use_amp: bool = False
+    freeze_bn: bool = False
     
     @classmethod
     def from_full(cls, full: GeneralConfig) -> "TrainerConfig":

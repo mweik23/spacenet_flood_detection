@@ -75,6 +75,8 @@ def build_parser():
                         help='number of base channels for the model')
     parser.add_argument('--depth', type=int, default=4, metavar='N',
                         help='depth of the model')
+    parser.add_argument('--freeze_bn', action='store_true', default=False,
+                        help='freeze batch normalization layers during training')
     ############################################################                    
     parser.add_argument('--local_rank', type=int, default=0)
     

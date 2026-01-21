@@ -26,6 +26,8 @@ class StandardPolicy(TrainingPolicy):
         #get labels and masks
         labels = data['labels'].to(self.device)
         #prepare the batch
+        print('use amp:', self.use_amp)
+        print('amp dtype:', self.amp_dtype)
         with torch.autocast(
             device_type=self.device.type,
             dtype=self.amp_dtype,  # fp16 or bf16
@@ -37,7 +39,6 @@ class StandardPolicy(TrainingPolicy):
             }
             
             batch_metrics = get_batch_metrics(batch, {'ce': self.loss_fn}, task="segmentation")
-            
         if state['get_buffers']:
             self.buffers.add(
                 preds=batch['pred'],

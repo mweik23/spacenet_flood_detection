@@ -4,10 +4,10 @@ args=(
   --exp_name "test_run"
   --batch_size 2
   --num_data -1
-  --epochs 2
+  --epochs 3
   --warmup_epochs 5
   --peak_lr 1e-3
-  --start_lr 1e-4
+  --start_lr 5e-4
   --patience 3
   --threshold 1e-4
   --reduce_factor 0.3
@@ -19,9 +19,10 @@ args=(
   --stride 256
   --num_tiles 4
   --num_sets 100
-  --base_channels 64
-  --depth 4
+  --base_channels 16
+  --depth 2
   --log_interval 1
+  --freeze_bn
 )
 
 export FORCE_CPU=1

@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "spacenet"                # choose a unique name
+name = "spacenet"
 version = "0.1.0"
 requires-python = ">=3.9,<3.10"
 dependencies = [
@@ -12,10 +12,14 @@ dependencies = [
   "matplotlib",
   "scikit-learn",
   "h5py",
-  "geopandas",
   "tifffile",
-  "opencv-python",
   "ml_tools @ git+https://github.com/mweik23/ml_tools.git@main"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "jupyterlab"
 ]
 
 [tool.setuptools]

@@ -59,7 +59,7 @@ def main(argv=None):
     
     #set up optimizer
     optim_cfg   = OptimConfig.from_full(full_cfg, rename={'lr': 'peak_lr'})
-    optimizer = get_optimizer(model, **asdict(optim_cfg))
+    optimizer = get_optimizer(ddp_model, **asdict(optim_cfg))
     
     #set up scheduler
     sched_config = SchedConfig.from_full(full_cfg, rename={'kind': 'sched_kind', 'mode': 'sched_mode'}) #TODO: ensure that these parameters exist in full config

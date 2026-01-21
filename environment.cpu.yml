@@ -1,0 +1,31 @@
+name: spacenet
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.9
+
+  # core python stack
+  - numpy
+  - pandas
+  - matplotlib
+  - scikit-learn
+  - h5py
+  - tifffile
+
+  # notebooks
+  - jupyterlab
+
+  # geospatial (prefer conda-forge)
+  - geopandas
+
+  # computer vision
+  - opencv
+
+  # pytorch stack
+  - pytorch
+  - torchvision
+  - torchaudio
+
+  # pip is needed to install your package + git dependency (ml_tools)
+  - pip
